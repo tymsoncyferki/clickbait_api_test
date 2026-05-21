@@ -4,14 +4,27 @@ from flask_cors import CORS
 
 from postdetection import handle_predict, handle_extract, handle_extract_and_predict
 from predetection import handle_predetection
-from dtos import Article, HTMLPayload
+from dtos import Article, HTMLPayload, LatencyEntry
 from utils import display_dict
 from config import Config
+import db
 
 import os
+import time
 
 app = Flask(__name__)
 CORS(app)
+
+db.init_db()
+
+
+def _record_backend_time(type_: str, site: str, start: float) -> None:
+    elapsed_ms = int((time.perf_counter() - start) * 1000)
+    try:
+        db.insert_time(type_, "backend", site, elapsed_ms)
+    except Exception as e:
+        app.logger.error(f"Failed to record backend latency: {e}")
+
 
 @app.route("/", methods=["GET"])
 def root():
@@ -51,32 +64,57 @@ def predict():
 def extract_and_predict():
     if request.method == 'OPTIONS':
         return '', 204
+    start = time.perf_counter()
+    site = ""
+    detection_type = "post"
     try:
         if Config.RESTRICTED and not validate_access(request):
             return jsonify({"error": "Unauthorized"}), 403
-        
+
         data = request.get_json()
         app.logger.info(f"Received request for /extract_and_predict endpoint with payload {display_dict(data)}")
         html_payload = HTMLPayload(**data)
+        site = html_payload.url
         generate_spoiler = data.get("generateSpoiler", True)
+        detection_type = "spoiler" if generate_spoiler else "post"
         prediction = handle_extract_and_predict(html_payload, generate_spoiler=generate_spoiler)
 
-        return jsonify(prediction.model_dump())
+        response = jsonify(prediction.model_dump())
+        _record_backend_time(detection_type, site, start)
+        return response
     except (ValidationError, Exception) as e:
         return jsonify({"error": str(e)}), 400
-    
+
 @app.route("/predetect", methods=["POST"])
 async def detect():
     if request.method == 'OPTIONS':
         return '', 204
+    start = time.perf_counter()
+    site = ""
     try:
         if Config.RESTRICTED and not validate_access(request):
-            return jsonify({"error": "Unauthorized"}), 403      
+            return jsonify({"error": "Unauthorized"}), 403
         data = request.get_json()
         app.logger.info(f"Received request for /predetect endpoint with payload {display_dict(data)}")
         html_payload = HTMLPayload(**data)
+        site = html_payload.url
         prediction = await handle_predetection(html_payload)
-        return jsonify(prediction.model_dump())
+        response = jsonify(prediction.model_dump())
+        _record_backend_time("pre", site, start)
+        return response
+    except (ValidationError, Exception) as e:
+        return jsonify({"error": str(e)}), 400
+
+
+@app.route("/latency", methods=["POST", "OPTIONS"])
+def latency_add():
+    if request.method == 'OPTIONS':
+        return '', 204
+    try:
+        data = request.get_json()
+        entry = LatencyEntry(**data)
+        db.insert_time(entry.type, entry.location, entry.site, entry.time)
+        return jsonify({"status": "ok"})
     except (ValidationError, Exception) as e:
         return jsonify({"error": str(e)}), 400
 
