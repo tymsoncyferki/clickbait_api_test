@@ -66,7 +66,6 @@ def extract_and_predict():
         return '', 204
     start = time.perf_counter()
     site = ""
-    detection_type = "post"
     try:
         if Config.RESTRICTED and not validate_access(request):
             return jsonify({"error": "Unauthorized"}), 403
@@ -76,8 +75,12 @@ def extract_and_predict():
         html_payload = HTMLPayload(**data)
         site = html_payload.url
         generate_spoiler = data.get("generateSpoiler", True)
-        detection_type = "spoiler" if generate_spoiler else "post"
         prediction = handle_extract_and_predict(html_payload, generate_spoiler=generate_spoiler)
+
+        # mark as "spoiler" only when a spoiler was actually generated
+        # (spoil() short-circuits to "" for non-clickbaits, so the cost
+        # of spoiler generation is only incurred when prediction == 1)
+        detection_type = "spoiler" if (generate_spoiler and prediction.prediction == 1) else "post"
 
         response = jsonify(prediction.model_dump())
         _record_backend_time(detection_type, site, start)
@@ -132,4 +135,4 @@ def validate_access(request):
 
 
 if __name__ == "__main__":
-    app.run(debug=True, host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))
+    app.run(debug=Config.DEBUG, host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))

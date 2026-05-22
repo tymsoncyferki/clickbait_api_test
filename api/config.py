@@ -25,6 +25,8 @@ class Config:
     # token for api access
     SPECIAL_TOKEN = os.getenv("SPECIAL_TOKEN")
 
+    DEBUG = os.getenv("DEBUG").strip().lower() == 'true'
+
 # pre-click config mapper
 CONF_MAPPER = {
     '*google.com*': ConfName.GOOGLE,
